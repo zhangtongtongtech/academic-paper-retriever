@@ -1,0 +1,2 @@
+# Optional: Google Scholar source only. Google frequently rate-limits automated access.
+scholarly>=1.7.11

@@ -1,0 +1,3 @@
+# Optional: visible-browser handoff for CAPTCHA/Cloudflare pages.
+# If Google Chrome is installed, no separate browser download is needed.
+playwright>=1.40

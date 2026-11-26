@@ -5,3 +5,4 @@ downloads/
 papers/
 *.part
 .DS_Store
+.browser-profile/

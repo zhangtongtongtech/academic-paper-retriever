@@ -147,6 +147,69 @@ PAPERHUB_SCIHUB_MIRRORS="https://sci-hub.se,https://sci-hub.st" \
 
 arXiv DataCite DOI（`10.48550/arXiv.*`）不会走 Sci-Hub，因为镜像不收录这类 DOI；此时直接 PDF 失败会明确报错。
 
+### 可见浏览器人工验证（CAPTCHA/Cloudflare）
+
+自动请求被 CAPTCHA、Cloudflare 或 DDoS-Guard 挡住时，可以用独立的浏览器交接脚本。它**不会破解验证码**：打开可见浏览器，由人完成验证，脚本等待并检测 PDF。
+
+安装：
+
+```bash
+python -m pip install -r requirements-browser.txt
+# 如果本机没有 Google Chrome：
+python -m playwright install chromium
+```
+
+使用：
+
+```bash
+python scripts/scihub_browser.py "10.1053/j.gastro.2018.03.029" --output-dir papers/
+```
+
+脚本行为：
+
+1. 用 Crossref 获取 DOI 元数据并生成文件名（失败时使用 `DOI <doi>` 占位）。
+2. 启动持久化 Chrome/Chromium 配置，依次打开镜像。
+3. 遇到 Cloudflare/CAPTCHA 时把窗口置于前台并等待人工验证，默认最多 240 秒。
+4. DDoS-Guard 页面只短暂等待其 JS 检查，避免在硬 403 页面浪费时间。
+5. 检测 iframe/embed/object/`citation_pdf_url`/PDF 链接或顶层 PDF。
+6. 用浏览器会话下载，校验 `%PDF-`、大小和 SHA-256。
+7. 写入同一个 `download_manifest.json`，`download.via` 为 `browser`。
+
+参数：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `doi` | 必填 | 要抓取的 DOI |
+| `--output-dir DIR` | `downloads` | PDF 与 manifest 目录 |
+| `--mirror URL` | 技能默认 8 个镜像 | 可重复；覆盖镜像列表 |
+| `--timeout SEC` | 240 | 整个人工验证/检测窗口的总等待时间 |
+| `--poll SEC` | 2 | 轮询 PDF 的间隔 |
+| `--channel` | `chrome` | Playwright 浏览器通道；也可 `chromium`、`msedge` |
+| `--executable PATH` | 无 | 指定 Chrome/Chromium 可执行文件 |
+| `--profile DIR` | `~/.cache/academic-paper-retriever/browser-profile` | 持久化 Cookie/会话目录 |
+| `--headless` | 关 | 仅用于本地测试；真实 CAPTCHA 必须用可见窗口 |
+| `--keep-open` | 关 | 结束后保留窗口，按 Enter 关闭 |
+| `--format` | `text` | `text` 或 `json` |
+| `--verbose` | 关 | 调试日志 |
+| `--version` | — | 版本号 |
+
+示例：
+
+```bash
+# 给验证留 10 分钟
+python scripts/scihub_browser.py "10.1234/example" --timeout 600 --output-dir papers/
+
+# 只用指定镜像
+python scripts/scihub_browser.py "10.1234/example" --mirror https://sci-hub.ren
+
+# 测试脚本管线（不会通过真实 CAPTCHA）
+python scripts/scihub_browser.py "10.1234/example" --headless --timeout 20
+```
+
+浏览器交接退出码：`0` 成功/已存在，`2` 参数或浏览器启动错误，`3` 缺少 Playwright，`4` 所有镜像失败，`130` 中断。
+
+注意：远程服务器、容器或 SSH 环境没有桌面窗口，无法显示可见浏览器；应在本地桌面运行。持久化 profile 会保存镜像 Cookie，不要提交到仓库。
+
 ## 输出格式
 
 ### text
@@ -359,6 +422,7 @@ python scripts/research.py pubmed "cancer" --download --no-scihub --output-dir p
 | `PAPERHUB_SCIHUB_MIRRORS` | 逗号分隔的镜像列表，覆盖默认顺序 |
 | `PAPERHUB_EMAIL` / `NCBI_EMAIL` | NCBI/Crossref 礼貌池联系邮箱 |
 | `PAPERHUB_USER_AGENT` | 自定义 HTTP User-Agent |
+| `PAPERHUB_BROWSER_PROFILE` | 浏览器交接的持久化 profile 目录 |
 
 ## 退出码
 
@@ -367,7 +431,7 @@ python scripts/research.py pubmed "cancer" --download --no-scihub --output-dir p
 | 0 | 成功；请求下载时至少一篇 `downloaded`/`existing` |
 | 1 | API/网络错误（含 429、超时、不可解析响应） |
 | 2 | 参数/本地文件错误 |
-| 3 | 缺少可选依赖（如 `scholarly`） |
+| 3 | 缺少可选依赖（如 `scholarly`、`playwright`） |
 | 4 | 检索成功但所有 PDF 均失败 |
 | 130 | 中断 |
 
@@ -383,6 +447,7 @@ python scripts/research.py pubmed "cancer" --download --no-scihub --output-dir p
 - `--full-text` 目前只输出 PMC 链接，不解析全文。
 - 不解析 PDF 内文，不抽取文内参考文献；`--citations` 是结果论文的书目记录。
 - Sci-Hub 域名、页面结构、反爬策略会变化；失败时报告具体 DOI 和错误，不承诺一定可下载。
+- 浏览器交接需要图形桌面；CAPTCHA 必须由人完成，脚本不自动破解，也不保证验证页一定可解。
 
 ## 合规
 

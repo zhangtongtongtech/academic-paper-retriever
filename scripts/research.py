@@ -42,7 +42,7 @@ except ImportError:  # Optional; regex extraction still works.
     BeautifulSoup = None  # type: ignore[assignment]
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 PUBMED_ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -1382,6 +1382,18 @@ def fetch_from_scihub(
             time.sleep(min(delay, 3.0))
 
     last_error = attempts[-1]["error"] if attempts else "all mirrors failed"
+    challenge_seen = any(
+        "CAPTCHA" in entry.get("error", "")
+        or "Cloudflare" in entry.get("error", "")
+        or "DDoS-Guard" in entry.get("error", "")
+        for entry in attempts
+    )
+    if challenge_seen:
+        helper = Path(__file__).with_name("scihub_browser.py")
+        log(
+            "Tip: a mirror presented a CAPTCHA/anti-bot challenge. For a visible "
+            f'browser handoff, run: python "{helper}" "{doi}" --output-dir <directory>'
+        )
     return DownloadOutcome(
         status="failed",
         error=f"Sci-Hub fallback failed ({len(mirrors)} mirrors); last error: {last_error}",

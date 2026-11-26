@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import research  # noqa: E402
+import scihub_browser  # noqa: E402
 
 
 class FakeResponse:
@@ -201,6 +202,61 @@ class RetrieverTests(unittest.TestCase):
         self.assertEqual(papers[0].doi, "10.1000/correct")
         self.assertEqual(papers[0].pmcid, "PMC12345")
         self.assertEqual(papers[0].published, "2024-01-02")
+
+    def test_browser_candidate_normalization(self) -> None:
+        self.assertEqual(
+            scihub_browser.normalize_candidate(
+                "//sci.bban.top/pdf/10.1/x.pdf#navpaned=1",
+                "https://sci-hub.ren/10.1/x",
+            ),
+            "https://sci.bban.top/pdf/10.1/x.pdf",
+        )
+        self.assertEqual(
+            scihub_browser.normalize_candidate(
+                "/paper.pdf", "https://sci-hub.ren/10.1/x"
+            ),
+            "https://sci-hub.ren/paper.pdf",
+        )
+        self.assertEqual(
+            scihub_browser.normalize_candidate(
+                "javascript:void(0)", "https://sci-hub.ren/10.1/x"
+            ),
+            "",
+        )
+
+    def test_browser_challenge_detection(self) -> None:
+        self.assertTrue(
+            scihub_browser.looks_like_challenge(
+                "Just a moment...", "Checking your browser before accessing."
+            )
+        )
+        self.assertTrue(
+            scihub_browser.looks_like_challenge(
+                "DDoS-Guard", "Please complete the CAPTCHA."
+            )
+        )
+        self.assertFalse(
+            scihub_browser.looks_like_challenge(
+                "Article", "This is a normal article viewer."
+            )
+        )
+
+    def test_browser_extracts_iframe_pdf(self) -> None:
+        class FakePage:
+            url = "https://sci-hub.ren/10.1/x"
+
+            def __init__(self) -> None:
+                self.frames = []
+
+            def evaluate(self, script: str):
+                if "document.contentType" in script:
+                    return "text/html"
+                return ["/paper.pdf#navpaned=1"]
+
+        self.assertEqual(
+            scihub_browser._extract_pdf_url(FakePage()),
+            "https://sci-hub.ren/paper.pdf",
+        )
 
     def test_semantic_parsing_and_author_filter(self) -> None:
         payload = {

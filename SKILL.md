@@ -1,6 +1,6 @@
 ---
 name: academic-paper-retriever
-description: 'Search, download, and cite academic papers from arXiv, PubMed, Semantic Scholar, and Google Scholar from one CLI. Use when the user asks to find papers, run a literature search, download a paper/PDF or DOI, build a bibliography, or export BibTeX/RIS/JSON/Markdown. Direct PDF download is attempted first; Sci-Hub mirrors are an automatic per-paper fallback. 触发词：找论文、检索文献、下载论文、抓取论文、文献综述检索、生成参考文献、导出 BibTeX。'
+description: 'Search, download, and cite academic papers from arXiv, PubMed, Semantic Scholar, and Google Scholar from one CLI. Use when the user asks to find papers, run a literature search, download a paper/PDF or DOI, build a bibliography, or export BibTeX/RIS/JSON/Markdown. Direct PDF download is attempted first; Sci-Hub mirrors are an automatic per-paper fallback, with an optional visible-browser CAPTCHA handoff. 触发词：找论文、检索文献、下载论文、抓取论文、文献综述检索、生成参考文献、导出 BibTeX。'
 ---
 
 # Academic Paper Retriever
@@ -19,6 +19,10 @@ cd "${CLAUDE_SKILL_DIR}"
 python -m pip install -r requirements.txt
 # 仅在需要 Google Scholar 时安装（可选、可能被反爬）
 python -m pip install -r requirements-optional.txt
+# 仅在需要 CAPTCHA/Cloudflare 人工浏览器验证时安装
+python -m pip install -r requirements-browser.txt
+# 若没有安装 Google Chrome，再执行：
+# python -m playwright install chromium
 ```
 
 非 Claude Code 环境（例如 DSH）用：
@@ -64,7 +68,7 @@ cp -R academic-paper-retriever .claude/skills/
 3. 下载后必须验证文件真实存在、以 `%PDF-` 开头、不是 HTML 登录页。以 `papers/download_manifest.json` 或 JSON 输出里的 `download.status` 为准，不凭命令退出码臆测。
 4. 元数据缺失就保持为空并在结果中说明；不要补造 DOI、年份、作者或摘要。
 5. Sci-Hub 只作为直接获取失败后的逐篇回退。若用户要求仅开放获取，加 `--no-scihub`。只在用户有权访问、且当地法律与机构政策允许的场景使用；不要把下载的 PDF 再分发。
-6. 遇到 429、Cloudflare、CAPTCHA 不要反复硬刷。完成一轮镜像尝试后停止并报告，让用户改用机构订阅、开放获取版本或稍后重试。
+6. 遇到 429、Cloudflare、CAPTCHA 不要反复硬刷。完成一轮镜像尝试后停止；若用户愿意人工验证，按“3.1 浏览器人工验证”打开可见浏览器，由用户完成验证，脚本只负责检测和下载，不破解验证码。
 
 ## 标准工作流
 
@@ -121,6 +125,52 @@ sci-hub.se → sci-hub.st → sci-hub.ru → sci-net.xyz → sci-hub.box → sci
 
 页面会跳转到当前可用镜像（例如 `sci-hub.jp`）；脚本以最终页面解析 PDF，不把跳转当作失败。`PAPERHUB_SCIHUB_MIRRORS` 可用逗号分隔覆盖顺序，便于测试或使用用户指定的镜像。
 
+### 3.1 CAPTCHA / Cloudflare 浏览器人工验证
+
+如果日志出现 `blocked by CAPTCHA/Cloudflare challenge`，不要尝试自动破解。安装可选浏览器依赖后，用可见浏览器交接：
+
+```bash
+python -m pip install -r requirements-browser.txt
+
+# 本机有 Chrome 时通常不需要再下载 Chromium
+python scripts/scihub_browser.py "10.1053/j.gastro.2018.03.029" --output-dir papers/
+```
+
+从项目目录运行时用绝对路径，避免 PDF 落进技能目录：
+
+```bash
+# Claude Code
+python "${CLAUDE_SKILL_DIR}/scripts/scihub_browser.py" "10.1234/example" --output-dir papers/
+
+# 其他环境
+python "<SKILL_DIR>/scripts/scihub_browser.py" "10.1234/example" --output-dir papers/
+```
+
+脚本会：
+
+1. 打开一个**可见的 Chrome 窗口**并导航到镜像页；
+2. 停在人机验证页面，等待你在浏览器里手动完成勾选/图片/Cloudflare 验证；
+3. 持续检测页面里的 iframe/embed/PDF 链接；
+4. 验证通过后，用浏览器会话下载 PDF，校验 `%PDF-`、大小和 SHA-256；
+5. 写入同一个 `download_manifest.json`，并输出 `download.via = "browser"`。
+
+可选参数：
+
+```bash
+# 给人工验证更多时间（默认 240 秒）
+python scripts/scihub_browser.py "10.1234/example" --timeout 600 --output-dir papers/
+
+# 指定镜像或 Chrome 可执行文件
+python scripts/scihub_browser.py "10.1234/example" --mirror https://sci-hub.ren
+
+# 调试时用无头浏览器（真实 CAPTCHA 必须用可见窗口）
+python scripts/scihub_browser.py "10.1234/example" --headless
+```
+
+脚本**不会**识别、破解或自动提交 CAPTCHA；验证始终由人完成。若运行在远程服务器/SSH/无桌面环境，浏览器窗口无法显示，应改用本地终端或机构订阅。浏览器配置默认保存在 `~/.cache/academic-paper-retriever/browser-profile`，可用 `PAPERHUB_BROWSER_PROFILE` 覆盖。
+
+如果通过 Claude Code/DSH 的 Bash 工具启动，先把该次命令超时设为大于 `--timeout`（例如 300 秒）；否则 agent 的工具超时可能在你完成验证前杀掉浏览器进程。默认 `--timeout 240`，工具超时应至少 300 秒。
+
 ### 4. 检索、引用、导出
 
 ```bash
@@ -165,7 +215,7 @@ python scripts/research.py arxiv "attention mechanism" \
 |---|---|
 | Semantic Scholar `429` | 等待后重试；设置 `SEMANTIC_SCHOLAR_API_KEY` 或 `S2_API_KEY`；仍失败则改用 arXiv/PubMed |
 | `scholarly` 未安装 | `python -m pip install -r requirements-optional.txt`；装后仍被 Google 拦截就停用该源 |
-| Sci-Hub DNS/403/CAPTCHA | 已自动尝试剩余镜像；仍失败就报告 DOI，建议机构访问/开放版本，不要循环重跑 |
+| Sci-Hub DNS/403/CAPTCHA | 已自动尝试剩余镜像；仍失败就报告 DOI。可运行 `scihub_browser.py` 打开可见浏览器由用户完成验证，不要自动破解 |
 | PubMed PMC 直链 403 | 属常见反爬；脚本会继续 Sci-Hub 回退；也可让用户从 PMC 页面手动获取 |
 | 0 条结果 | 放宽查询、去掉 `--author`/`--category`/日期限制，或换来源 |
 | 全部下载失败，退出 4 | 读取 JSON 中每篇的 `download.error`，逐篇处理；不要只重跑整批 |
@@ -181,5 +231,7 @@ python scripts/research.py arxiv "attention mechanism" \
 | 3 | 缺少依赖（如 `scholarly`） |
 | 4 | 检索成功但所有 PDF 下载失败 |
 | 130 | 用户中断 |
+
+`scihub_browser.py` 使用相同约定：`0` 成功/已存在，`2` 参数或浏览器配置错误，`3` 缺少 Playwright，`4` 所有镜像均失败，`130` 中断。
 
 完整参数、JSON 字段和更多示例见 `references/command-reference.md`。
